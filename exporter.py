@@ -22,6 +22,8 @@ from tqdm import tqdm
 
 import config
 
+from version import __version__
+
 
 def sanitize_key(key: str) -> str:
     return key.replace("/", "-")
@@ -207,8 +209,17 @@ if __name__ == "__main__":
         default=None,
         help="Limit the number of images to export."
     )
+    
+    parser.add_argument(
+        "--version", 
+        action="store_true"
+    )
 
     args = parser.parse_args()
+
+    if args.version: 
+        print(f"sqlite3-image-exporter v{__version__}")
+        exit(0)
 
     export_images(
         force=args.force,

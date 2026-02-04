@@ -1,0 +1,12 @@
+# Sample configuration for sqlite3-image-exporter
+# Copy this file to config.py and adjust paths as needed.
+
+DB_PATH = "/path/to/database.db"
+
+DB_TABLE = "Images"
+DB_FIELD_KEY = "Key"
+DB_FIELD_TIMESTAMP = "Timestamp"
+DB_FIELD_IMAGE = "Image"
+
+TARGET_DIRECTORY_PATH = "./Pictures"
+LOG_PATH = "./export_log.txt"

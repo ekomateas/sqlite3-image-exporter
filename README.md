@@ -59,6 +59,9 @@ python3 exporter.py [options]
 --limit N  
     Export only the first N images
 
+--help
+    See all available options.
+
 ---
 
 ## Configuration
@@ -73,7 +76,7 @@ DB_FIELD_KEY = "Key"
 DB_FIELD_TIMESTAMP = "Timestamp"
 DB_FIELD_IMAGE = "Image"
 
-TARGET_DIRECTORY_PATH = "./Covers"
+TARGET_DIRECTORY_PATH = "./Pictures"
 LOG_PATH = "./export_log.txt"
 ```
 

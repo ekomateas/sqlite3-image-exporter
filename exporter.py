@@ -18,7 +18,6 @@ import sqlite3
 import argparse
 from io import BytesIO
 from PIL import Image
-from tqdm import tqdm
 
 import config
 
@@ -109,7 +108,7 @@ def export_images(force=False, dry_run=False, keep_log=False,
     if limit is not None:
         rows = rows[:limit]
 
-    for row in tqdm(rows, desc="Processing images", unit="img"):
+    for row in rows:
         raw_key = row[config.DB_FIELD_KEY]
         key = sanitize_key(raw_key)
         image_data = row[config.DB_FIELD_IMAGE]

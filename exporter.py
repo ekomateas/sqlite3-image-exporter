@@ -14,8 +14,11 @@ Run with --help to see all available options.
 """
 
 import os
+import re
 import sqlite3
 import argparse
+import hashlib
+import imagehash
 from io import BytesIO
 from PIL import Image
 
@@ -23,9 +26,144 @@ import config
 
 from version import __version__
 
+from collections import defaultdict
+from typing import Optional, Dict, List
 
+
+class ImageData:
+    """
+    Unified representation of an image, backed either by a filesystem path
+    or by raw bytes. Lazily computes md5 hash and perceptual hash (phash).
+    """
+
+    def __init__(self, path: Optional[str] = None, data: Optional[bytes] = None):
+        if path is None and data is None:
+            raise ValueError("Either 'path' or 'data' must be provided")
+
+        self.path = path
+        self.data = data
+
+        if path:
+            self.size = os.path.getsize(path)
+        else:
+            self.size = len(data)
+
+        self._hash = None
+        self._phash = None
+
+    @property
+    def hash(self) -> str:
+        """MD5 hash of the image bytes."""
+        if self._hash is None:
+            h = hashlib.new("md5")
+            if self.path:
+                with open(self.path, "rb") as f:
+                    h.update(f.read())
+            else:
+                h.update(self.data)
+            self._hash = h.hexdigest()
+        return self._hash
+
+    @property
+    def phash(self) -> str:
+        """Perceptual hash of the image."""
+        if self._phash is None:
+            if self.path:
+                img = Image.open(self.path)
+            else:
+                img = Image.open(BytesIO(self.data))
+            self._phash = str(imagehash.phash(img))
+        return self._phash
+
+
+class ImageExistsChecker:
+    """
+    Loads all images from a directory and allows fast existence checks
+    by filename, size, md5 hash, or perceptual hash.
+    """
+
+    def __init__(self, directory: str):
+        self.directory = directory
+        self._paths = set()
+        self._sizes = set()
+        self._images_by_size: Dict[int, List[ImageData]] = defaultdict(list)
+
+    def load_images(self):
+        """Load all images from the directory into memory."""
+        for fname in os.listdir(self.directory):
+            path = os.path.join(self.directory, fname)
+            if not os.path.isfile(path):
+                continue
+
+            img = ImageData(path=path)
+            self._paths.add(path)
+            self._sizes.add(img.size)
+            self._images_by_size[img.size].append(img)
+
+    # ------------------------------------------------------------
+    # Internal shared logic
+    # ------------------------------------------------------------
+    def _exists_candidate(self, candidate: ImageData, phash: bool = False) -> bool:
+        """Shared logic for checking existence by path or by data."""
+
+        # 1. Path match (only if candidate has a path)
+        if candidate.path and candidate.path in self._paths:
+            return True
+
+        # 2. Size mismatch → impossible match
+        if candidate.size not in self._sizes:
+            return False
+
+        # 3. Compare with same-size images
+        same_size = self._images_by_size[candidate.size]
+
+        if phash:
+            c_phash = candidate.phash
+            for img in same_size:
+                if img.phash == c_phash:
+                    return True
+        else:
+            c_hash = candidate.hash
+            for img in same_size:
+                if img.hash == c_hash:
+                    return True
+
+        return False
+
+    # ------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------
+    def exists(self, path: str, phash: bool = False) -> bool:
+        """Check if an image exists on disk by comparing with a file path."""
+        candidate = ImageData(path=path)
+        return self._exists_candidate(candidate, phash=phash)
+
+    def exists_by_data(self, data: bytes, phash: bool = False) -> bool:
+        """Check if an image exists on disk by comparing raw bytes."""
+        candidate = ImageData(data=data)
+        return self._exists_candidate(candidate, phash=phash)
+    
+    @property
+    def count(self):
+        return sum(len(v) for v in self._images_by_size.values())
+    
+
+    def add_image(self, path: str):
+        """Register a newly written image so future duplicate checks see it."""
+        img = ImageData(path=path)
+        self._paths.add(path)
+        self._sizes.add(img.size)
+        self._images_by_size[img.size].append(img)
+
+
+
+    
 def sanitize_key(key: str) -> str:
-    return key.replace("/", "-")
+    key = key.strip()
+    key = key.replace("/", "-").replace("\\", "-")
+    key = re.sub(r"[^\w._-]+", "_", key, flags=re.UNICODE)
+    return key
+
 
 
 def detect_image_extension(data: bytes) -> str:
@@ -53,6 +191,7 @@ def is_corrupt_image(data: bytes) -> bool:
 
 def convert_to_jpeg(image_data: bytes) -> bytes:
     with Image.open(BytesIO(image_data)) as img:
+        img.load()
         rgb = img.convert("RGB")
         out = BytesIO()
         rgb.save(out, format="JPEG", quality=95)
@@ -70,12 +209,6 @@ def export_images(force=False, dry_run=False, keep_log=False,
         print(msg)
         if keep_log:
             log_lines.append(msg)
-
-    # Existing files
-    existing_files = {
-        os.path.splitext(fname)[0]
-        for fname in os.listdir(config.TARGET_DIRECTORY_PATH)
-    }
 
     # DB connection
     conn = sqlite3.connect(config.DB_PATH)
@@ -108,6 +241,9 @@ def export_images(force=False, dry_run=False, keep_log=False,
     if limit is not None:
         rows = rows[:limit]
 
+    iec = ImageExistsChecker(config.TARGET_DIRECTORY_PATH)
+    iec.load_images()
+
     for row in rows:
         raw_key = row[config.DB_FIELD_KEY]
         key = sanitize_key(raw_key)
@@ -123,10 +259,20 @@ def export_images(force=False, dry_run=False, keep_log=False,
         filename = f"{key}{ext if keep_image_format else '.jpg'}"
         filepath = os.path.join(config.TARGET_DIRECTORY_PATH, filename)
 
-        # Existing file logic
-        if os.path.exists(filepath) and not force:
-            skipped_existing += 1
-            continue
+        # Existing file logic (filename or content match)
+        if not force:
+            # 1. Filename match
+            if os.path.exists(filepath):
+                skipped_existing += 1
+                log(f"Skipped existing (filename): {filepath}")
+                continue
+
+            # 2. Content match (md5 or phash)
+            if iec.exists_by_data(image_data, phash=False):
+                skipped_existing += 1
+                log(f"Skipped existing (content match): {raw_key}")
+                continue
+
 
         # Convert if needed
         if not keep_image_format and ext != ".jpg":
@@ -148,6 +294,7 @@ def export_images(force=False, dry_run=False, keep_log=False,
         with open(filepath, "wb") as f:
             f.write(image_data)
 
+        iec.add_image(filepath)
         exported_count += 1
 
     # Write log if needed
@@ -159,7 +306,7 @@ def export_images(force=False, dry_run=False, keep_log=False,
     print("\n===== SUMMARY =====")
     print(f"Total images in DB:      {total_in_db}")
     print(f"Non-null images:         {len(rows)}")
-    print(f"Images already on disk:  {len(existing_files)}")
+    print(f"Images on disk before export: {iec.count}")
     print(f"Corrupt images skipped:  {corrupt_count}")
     print(f"Existing skipped:        {skipped_existing}")
     print(f"New images exported:     {exported_count}")

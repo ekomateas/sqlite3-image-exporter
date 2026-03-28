@@ -142,11 +142,10 @@ class ImageExistsChecker:
         """Check if an image exists on disk by comparing raw bytes."""
         candidate = ImageData(data=data)
         return self._exists_candidate(candidate, phash=phash)
-    
+
     @property
     def count(self):
         return sum(len(v) for v in self._images_by_size.values())
-    
 
     def add_image(self, path: str):
         """Register a newly written image so future duplicate checks see it."""
@@ -156,8 +155,6 @@ class ImageExistsChecker:
         self._images_by_size[img.size].append(img)
 
 
-
-    
 def sanitize_key(key: str) -> str:
     key = key.strip()
     key = key.replace("/", "-").replace("\\", "-")
@@ -165,9 +162,8 @@ def sanitize_key(key: str) -> str:
     return key
 
 
-
 def detect_image_extension(data: bytes) -> str:
-    if data.startswith(b"\xFF\xD8\xFF"):
+    if data.startswith(b"\xff\xd8\xff"):
         return ".jpg"
     if data.startswith(b"\x89PNG\r\n\x1a\n"):
         return ".png"
@@ -198,13 +194,15 @@ def convert_to_jpeg(image_data: bytes) -> bytes:
         return out.getvalue()
 
 
-def export_images(force=False, dry_run=False, keep_log=False,
-                  keep_image_format=False, limit=None):
+def export_images(
+    force=False, dry_run=False, keep_log=False, keep_image_format=False, limit=None
+):
 
     os.makedirs(config.TARGET_DIRECTORY_PATH, exist_ok=True)
 
     # Logging
     log_lines = []
+
     def log(msg):
         print(msg)
         if keep_log:
@@ -273,7 +271,6 @@ def export_images(force=False, dry_run=False, keep_log=False,
                 log(f"Skipped existing (content match): {raw_key}")
                 continue
 
-
         # Convert if needed
         if not keep_image_format and ext != ".jpg":
             try:
@@ -322,48 +319,42 @@ if __name__ == "__main__":
             "detects corrupt images, supports dry-run mode, force overwrite, "
             "logging, and configurable limits."
         ),
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Overwrite existing files instead of skipping them."
+        help="Overwrite existing files instead of skipping them.",
     )
 
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Simulate actions without writing any files."
+        help="Simulate actions without writing any files.",
     )
 
     parser.add_argument(
         "--keep-log",
         action="store_true",
-        help="Save a draft log of all actions to export_log.txt."
+        help="Save a draft log of all actions to export_log.txt.",
     )
 
     parser.add_argument(
         "--keep-image-format",
         action="store_true",
-        help="Preserve original image format instead of converting to JPEG."
+        help="Preserve original image format instead of converting to JPEG.",
     )
 
     parser.add_argument(
-        "--limit",
-        type=int,
-        default=None,
-        help="Limit the number of images to export."
+        "--limit", type=int, default=None, help="Limit the number of images to export."
     )
-    
-    parser.add_argument(
-        "--version", 
-        action="store_true"
-    )
+
+    parser.add_argument("--version", action="store_true")
 
     args = parser.parse_args()
 
-    if args.version: 
+    if args.version:
         print(f"sqlite3-image-exporter v{__version__}")
         exit(0)
 
@@ -372,5 +363,5 @@ if __name__ == "__main__":
         dry_run=args.dry_run,
         keep_log=args.keep_log,
         keep_image_format=args.keep_image_format,
-        limit=args.limit
+        limit=args.limit,
     )
